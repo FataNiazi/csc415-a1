@@ -2,7 +2,8 @@ import yaml
 import time
 import os
 from tqdm import trange
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 from tensorflow.python.lib.io.tf_record import TFRecordOptions, TFRecordCompressionType, TFRecordWriter
 import matplotlib.pyplot as plt
@@ -19,19 +20,19 @@ def _int64_feature(value):
 def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
-def write_data(sim_manager, data_path):
-    """Make some domrand data and save it to tfrecords."""
-    image, label = sim_manager.get_data()
-
-    rows = image.shape[0]
-    cols = image.shape[1]
-    depth = image.shape[2]
-
-    # OUTER = 5e2
-    # INNER = 1e3
+def write_data_with_sim(sim_manager, data_path):
+    """Make domrand data using SimManager and save to tfrecords."""
     # generate 1e5 examples, spread across 1e2 files
     print()
-    print('Generating 1e5 examples (~30 GB). You can ctrl-c anytime you want')
+    print('Generating 1e5 examples. You can ctrl-c anytime you want')
+    print()
+    write_data(sim_manager, data_path, data=None)
+
+def write_data(model_or_sim, data_path, data=None):
+    """Make some domrand data and save it to tfrecords."""
+    # generate 1e5 examples, spread across 1e2 files
+    print()
+    print('Generating data examples. You can ctrl-c anytime you want')
     print()
     for i in trange(int(1e2), desc='Files created'):
         date_string = time.strftime('%Y-%m-%d-%H-%M-%S')
@@ -39,7 +40,11 @@ def write_data(sim_manager, data_path):
         with TFRecordWriter(filename, options=TFRecordOptions(TFRecordCompressionType.GZIP)) as writer:
             try:
                 for j in trange(int(1e3), desc='Examples generated'):
-                    image, label = sim_manager.get_data()
+                    if data is None:
+                        image, label = model_or_sim.get_data()
+                    else:
+                        # This branch is deprecated - should always use SimManager.get_data()
+                        raise ValueError("Direct model/data usage is not supported. Use SimManager.get_data()")
                     assert image.dtype == np.uint8
                     image_raw = image.tostring()
                     label_raw = label.astype(np.float32).tostring()
@@ -59,15 +64,15 @@ def write_data(sim_manager, data_path):
 
 def parse_record(args):
     """parse record function for loading data from file. should get called as first dataset.map() function"""
-    features = {'label_raw': tf.FixedLenFeature((), tf.string),
-                'image_raw': tf.FixedLenFeature((), tf.string),
+    features = {'label_raw': tf.io.FixedLenFeature((), tf.string),
+                'image_raw': tf.io.FixedLenFeature((), tf.string),
     }
-    parsed = tf.parse_single_example(args, features)
+    parsed = tf.io.parse_single_example(args, features)
 
-    image = tf.cast(tf.reshape(tf.decode_raw(parsed['image_raw'], tf.uint8), (224, 224, 3)), tf.float32)
+    image = tf.cast(tf.reshape(tf.io.decode_raw(parsed['image_raw'], tf.uint8), (224, 224, 3)), tf.float32)
     image = (image / 127.5) - 1.0
 
-    label = tf.decode_raw(parsed['label_raw'], tf.float32)
+    label = tf.io.decode_raw(parsed['label_raw'], tf.float32)
     return image, label
 
 # NOTE: FLAGS are used here because it is hard to pass arguments to these functions, but it makes
@@ -100,7 +105,7 @@ def brighten_image(image, label):
 def get_real_cam_pos(real_data_path):
     """Return xyz numpy array of camera position of associated data"""
     meta_file = os.path.join(real_data_path, 'metadata.yaml')
-    metadata = yaml.load(open(meta_file, 'r'))['camera']
+    metadata = yaml.load(open(meta_file, 'r'), Loader=yaml.FullLoader)['camera']
     cam_pos = np.array([metadata['x'], metadata['y'], metadata['z']])
     return cam_pos
 

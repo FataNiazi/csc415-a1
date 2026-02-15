@@ -1,10 +1,9 @@
 <common>
   <visual>
-    <map znear=0.0001 />
     <headlight ambient="0.4 0.4 0.4" diffuse="0.4 0.4 0.4" specular="0.5 0.5 0.5" />
   </visual>
   <compiler angle="radian" meshdir="./meshes/" />
-  <option collision="predefined" />
+  <option />
 
   <asset>
     <mesh name="base_link" file="base_link.stl" />

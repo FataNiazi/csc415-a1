@@ -11,6 +11,11 @@ flags.DEFINE_bool('gui', default=False, help='')
 flags.DEFINE_bool('display_data', default=False, help='')
 flags.DEFINE_string('look_at', default='robot_table_link', help='')
 
+# Ablation study flags
+flags.DEFINE_bool('no_noise', default=False, help='Disable random noise/brightness in images')
+flags.DEFINE_bool('no_camera_rand', default=False, help='Disable camera randomization')
+flags.DEFINE_bool('no_distractors', default=False, help='Disable distractors in training')
+
 # Data and logging
 flags.DEFINE_string('data_path', default='./data/sim/', help='')
 flags.DEFINE_string('real_data_path', default='./data/real/', help='')
@@ -18,6 +23,7 @@ flags.DEFINE_string('real_data_shape', default='asus', help='')
 flags.DEFINE_string('checkpoint', default='checkpoint', help='checkpoint directory')
 flags.DEFINE_string('manual_checkpoint', default=None, help='instead of tacking on extra terms, use their exact path')
 flags.DEFINE_string('logpath', default='./logs', help='log directory')
+flags.DEFINE_string('epoch_log', default=None, help='CSV file to log epoch metrics for plotting')
 flags.DEFINE_bool('serve', default=False, help='export the model to allow for tensorflow serving')
 flags.DEFINE_integer('num_files', default=None, help='')
 flags.DEFINE_integer('shuffle_files', default=0, help='')
@@ -43,9 +49,9 @@ flags.DEFINE_bool('softmax', default=False, help='just softmax right before flat
 flags.DEFINE_string('activ', default='relu', help='activation function')
 flags.DEFINE_string('suffix', default='', help='')
 
-flags.DEFINE_list('s2_layers', default=[64, 64, 64, 64], help='conv layers of stride 2')
+flags.DEFINE_list('s2_layers', default=[32, 32, 32, 32], help='conv layers of stride 2')
 flags.DEFINE_list('s1_layers', default=[64], help='conv layers of stride 1')
-flags.DEFINE_list('fc_layers', default=[100, 100, 100], help='fully connected layers')
+flags.DEFINE_list('fc_layers', default=[50, 50, 50], help='fully connected layers')
 flags.DEFINE_bool('zero_last', default=False, help='start weights in last layer as 0')
 flags.DEFINE_float('label_smoothing', default=0.05, help='used for regularization in tf.losses.softmax...')
 
@@ -53,7 +59,7 @@ flags.DEFINE_float('label_smoothing', default=0.05, help='used for regularizatio
 flags.DEFINE_integer('anneal_interval', default=None, help='')
 flags.DEFINE_float('lr', default=1e-4, help='')
 flags.DEFINE_float('lr_anneal', default=0.5, help='')
-flags.DEFINE_integer('bs', default=64, help='')
+flags.DEFINE_integer('bs', default=1, help='')
 flags.DEFINE_float('bs_anneal', default=1, help='')
 
 FLAGS.s2_layers = list(map(int, FLAGS.s2_layers))
@@ -64,14 +70,17 @@ FLAGS.fc_layers = list(map(int, FLAGS.fc_layers))
 
 if FLAGS.filenames is None:
     data_path = FLAGS.data_path
-    data_files = os.listdir(data_path)
-    FLAGS.filenames = [os.path.join(data_path, df) for df in data_files]
+    if os.path.exists(data_path):
+        data_files = os.listdir(data_path)
+        FLAGS.filenames = [os.path.join(data_path, df) for df in data_files]
+    else:
+        FLAGS.filenames = []
 
-if FLAGS.num_files is not None:
+if FLAGS.num_files is not None and FLAGS.filenames:
     FLAGS.filenames = FLAGS.filenames[:FLAGS.num_files]
 
 
-num_files_str = str(len(FLAGS.filenames))
+num_files_str = str(len(FLAGS.filenames)) if FLAGS.filenames else "0"
 
 # TODO: add label smoothing, sep folders for binned
 settings_str = ''

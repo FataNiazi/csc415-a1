@@ -2,10 +2,18 @@
 data/sim
 scratch/
 checkpoint/
+checkpoints/
 .lenv/
 
-logs/*
+# Experiment outputs
+logs/
+experiment_results/
+results/
+*.tfrecords
+*.log
 
+# Mujoco
+.mujoco/
 
 # Vim
 *.swp

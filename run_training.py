@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 import os
 import random
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from domrand.define_flags import FLAGS
 from domrand.trainer import train_simple
 from domrand.utils.general import notify

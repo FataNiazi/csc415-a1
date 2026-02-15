@@ -3,7 +3,7 @@ import time
 import numpy as np
 import quaternion
 import skimage
-from mujoco_py import functions
+import mujoco
 
 normalize = lambda x: x / np.linalg.norm(x)
 
@@ -22,7 +22,7 @@ def look_at(from_pos, to_pos):
     v = np.cross(n, u)
     mat = np.stack([u, v, n], axis=1).flatten()
     quat = np.zeros(4)
-    functions.mju_mat2Quat(quat, mat) # this can be replaced with np.quaternion something if we need
+    mujoco.mju_mat2Quat(quat, mat)
     return quat
 
 

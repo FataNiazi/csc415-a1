@@ -149,7 +149,7 @@ python3 run_training.py --num_files=100
 This will train a model in about 3 hours (about 8 epochs) on a GTX 1080 Ti GPU.
 
 You can monitor training progress and results using TensorBoard. The default
-is to log into the `checkpoint` folder.  See [`sim2real/define_flags.py`](./sim2real/define_flags.py) or
+is to log into the `checkpoint` folder.  See [`domrand/define_flags.py`](./domrand/define_flags.py) or
 `python3 run_training.py --help` for script settings.
 
 
@@ -170,3 +170,16 @@ is to log into the `checkpoint` folder.  See [`sim2real/define_flags.py`](./sim2
   </visual>
 ```
 
+
+**Running ablation experiments**
+
+To run all 4 ablation experiments from the paper (full method, no noise, no camera randomization, no distractors):
+
+```
+python3 run_ablation_experiments.py
+```
+
+For GPU training with XLA (recommended for H100):
+```
+TF_XLA_FLAGS="--tf_xla_auto_jit=2" python3 run_ablation_experiments.py
+```

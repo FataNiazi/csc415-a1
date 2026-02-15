@@ -1,5 +1,6 @@
 from tensorflow.python.layers import base
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 from functools import partial
 
@@ -36,8 +37,8 @@ def ssam(conv_layer):
 
 def bn_conv(inputs, **kwargs):
     """Batch norm convolution layer"""
-    out = tf.layers.conv2d(inputs, **kwargs)
-    out = tf.layers.batch_normalization(out, training=True, fused=True)
+    out = tf.keras.layers.conv2d(inputs, **kwargs)
+    out = tf.keras.layers.BatchNormalization(fused=True)(out, training=True)
     out = tf.nn.relu(out)
     return out
 
@@ -47,14 +48,14 @@ def flatten(inputs, use_ssam):
         out = ssam(inputs)
         #out = tf.contrib.layers.spatial_softmax(inputs, name='ssam')
     else:
-        out = tf.layers.flatten(inputs)
+        out = tf.keras.layers.Flatten()(inputs)
     return out 
 
 def binned_head(inputs, outdim, hparams):
     """Output of binned network, make heads for xyz and stack them"""
-    outx = tf.layers.dense(inputs, outdim, activation=None)
-    outy = tf.layers.dense(inputs, outdim, activation=None)
-    outz = tf.layers.dense(inputs, outdim, activation=None)
+    outx = tf.keras.layers.Dense(outdim, activation=None)(inputs)
+    outy = tf.keras.layers.Dense(outdim, activation=None)(inputs)
+    outz = tf.keras.layers.Dense(outdim, activation=None)(inputs)
 
     out = tf.stack([outx, outy, outz], 1)
     return out
@@ -62,15 +63,16 @@ def binned_head(inputs, outdim, hparams):
 def trivial_forward(inputs, outdim, hparams):
     """for testing speed"""
     out = tf.contrib.layers.spatial_softmax(inputs)
-    out = tf.layers.dense(out, outdim)
+    out = tf.keras.layers.Dense(outdim)(out)
     return out
 
 # TODO: convert all the extra args to a dictionary
 #s2_layers=None, s1_layers=None, fc_layers=None, batch_norm=False, ssam=False
 def vgg_forward(inputs, outdim, hparams):
     """Forward pass of VGG network"""
-    maxpool = partial(tf.layers.max_pooling2d, pool_size=2, strides=(2,2), padding='SAME')
-    conv2d = partial(tf.layers.conv2d, kernel_size=3, strides=(1,1), padding='SAME', activation=tf.nn.relu) # uses 3x3, stride 1, zero-padding throughout
+    def maxpool(x):
+        return tf.nn.max_pool2d(x, ksize=[1,2,2,1], strides=[1,2,2,1], padding='SAME')
+    conv2d = lambda inputs, filters: tf.keras.layers.Conv2D(filters, kernel_size=3, strides=1, padding='same', activation='relu')(inputs)
     vgg_bn_conv = partial(bn_conv, kernel_size=3, strides=(1,1), padding='SAME', activation=tf.nn.relu)
     conv = vgg_bn_conv if hparams['batch_norm'] else conv2d # add batch norm
 
@@ -78,34 +80,34 @@ def vgg_forward(inputs, outdim, hparams):
 
     out = conv(inputs=out, filters=64)
     out = conv(inputs=out, filters=64)
-    out = maxpool(inputs=out)
+    out = maxpool(out)
 
     out = conv(inputs=out, filters=128)
     out = conv(inputs=out, filters=128)
-    out = maxpool(inputs=out)
+    out = maxpool(out)
 
     out = conv(inputs=out, filters=256)
     out = conv(inputs=out, filters=256)
     out = conv(inputs=out, filters=256)
-    out = maxpool(inputs=out)
+    out = maxpool(out)
 
     out = conv(inputs=out, filters=512)
     out = conv(inputs=out, filters=512)
     out = conv(inputs=out, filters=512)
-    out = maxpool(inputs=out)
+    out = maxpool(out)
 
     out = conv(inputs=out, filters=512)
     out = conv(inputs=out, filters=512)
     out = conv(inputs=out, filters=512)
-    out = maxpool(inputs=out)
+    out = maxpool(out)
 
     out = flatten(out, hparams['ssam'])
 
-    out = tf.layers.dense(out, 256, tf.nn.relu)
-    out = tf.layers.dense(out, 64, tf.nn.relu)
+    out = tf.keras.layers.Dense(256, activation=tf.nn.relu)(out)
+    out = tf.keras.layers.Dense(64, activation=tf.nn.relu)(out)
 
     if hparams['output'] == 'xyz': 
-        out = tf.layers.dense(out, outdim, kernel_initializer=None)
+        out = tf.keras.layers.Dense(outdim, kernel_initializer=None)(out)
     elif hparams['output'] == 'binned':
         out = binned_head(out, outdim, hparams)
     return out
@@ -122,7 +124,7 @@ def reg_forward(inputs, outdim, hparams):
     fc
     out
     """
-    conv2d = partial(tf.layers.conv2d, kernel_size=3, padding='SAME', activation=tf.nn.relu) # uses 4x3, stride 1, zero-padding throughout
+    conv2d = partial(tf.keras.layers.conv2d, kernel_size=3, padding='SAME', activation=tf.nn.relu) # uses 4x3, stride 1, zero-padding throughout
     bn_conv2d = partial(bn_conv, kernel_size=3, padding='SAME', activation=tf.nn.relu)
     conv = bn_conv2d if hparams['batch_norm ']else conv2d # add batch norm
 
@@ -136,7 +138,7 @@ def reg_forward(inputs, outdim, hparams):
     out = flatten(out, hparams['ssam'])
 
     for fc_layer in hparams['fc_layers']:
-        out = tf.layers.dense(out, fc_layer, activation=tf.nn.relu)
+        out = tf.keras.layers.Dense(fc_layer, activation=tf.nn.relu)(out)
 
-    out = tf.layers.dense(out, outdim)
+    out = tf.keras.layers.Dense(outdim)(out)
     return out

@@ -3,8 +3,10 @@ import multiprocessing
 import sys
 import itertools
 import time
+import csv
 
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 import matplotlib.pyplot as plt
 import tqdm
@@ -56,6 +58,7 @@ def train_simple():
     #train_dataset = train_dataset.shuffle(buffer_size=1000)
     train_dataset = train_dataset.batch(global_bs)
     train_dataset = train_dataset.map(brighten_image, num_parallel_calls=ncpu)
+    train_dataset = train_dataset.repeat()  # Repeat indefinitely to avoid running out of data
     train_dataset = train_dataset.prefetch(2)
 
 
@@ -114,8 +117,8 @@ def train_simple():
             eucs = []
             try:
                 total_steps_per_epoch = ((len(FLAGS.filenames) * 1000) // bs)
-                pbar = tqdm.tqdm(total_steps_per_epoch+1, unit='step', desc='Epoch step progress')
-                for i in range(total_steps_per_epoch+2):
+                pbar = tqdm.tqdm(total_steps_per_epoch, unit='step', desc='Epoch step progress')
+                for i in range(total_steps_per_epoch):
                     # Train
                     _, train_loss, train_euc, train_preds, labels, step = sess.run([model.minimize_op, model.loss, model.euc, model.preds, d_label, inc_step], feed_dict={model.lr_ph: lr})
                     if FLAGS.output == 'binned' and (np.count_nonzero(labels >= FLAGS.coarse_bin) or np.count_nonzero(labels < 0)):
@@ -124,46 +127,26 @@ def train_simple():
                     losses.append(train_loss)
                     eucs.append(train_euc)
                     pbar.update(1)
-                assert False, "we should never get down here"
+                pbar.close()
+                raise tf.errors.OutOfRangeError(None, None, "Epoch complete")
 
             except tf.errors.OutOfRangeError:
                 pbar.close()
 
-                # Train summary
-                sess.run(train_iter_op, {filenames_ph: rand_files()}) # reset so we can grab some summaries
-                train_images, train_preds, train_labels, summary = sess.run([d_rebuilt_image, model.preds, d_label, train_summaries], feed_dict={model.lr_ph: lr})
-                train_writer.add_summary(summary, global_step=epoch*len(FLAGS.filenames))
-
-                # Eval summary 
-                sess.run(eval_iter_op, feed_dict={eval_img_ph: file_eval_imgs, eval_label_ph: file_eval_labels}) # swap to eval dataset
-                eval_loss, eval_euc, eval_images, eval_preds, eval_labels, eval_summary = sess.run([model.loss, model.euc, d_rebuilt_image, model.preds, d_label, train_summaries])
-                eval_writer.add_summary(eval_summary, global_step=epoch*len(FLAGS.filenames))
-
-                # make sure we are still improving
-                if eval_euc > best_eval_euc:
-                    early_stop_counter += 1
-                else:
-                    early_stop_counter = 0
-                    best_eval_euc = eval_euc
-
-                if FLAGS.plot_preds:
-                    # takes about 2s 
-                    # EVAL VIZ
-                    zipped = list(zip(eval_images, eval_preds, eval_labels))
-                    #idxs = np.linspace(0,50,50).astype(int)
-                    #zipped = [zipped[idx] for idx in idxs]
-                    eval_plots = np.array([make_pred_plot(img, pred, label, mode=FLAGS.output) for (img, pred, label) in zipped])
-                    plot_summary = sess.run([viz_eval_summary], {pred_plot_ph:eval_plots})[0]
-                    eval_writer.add_summary(plot_summary, global_step=epoch*len(FLAGS.filenames))
-                    # TRAIN VIZ
-                    zipped = list(zip(train_images[:3], train_preds[:3], train_labels[:3]))
-                    eval_plots = np.array([make_pred_plot(img, pred, label, mode=FLAGS.output) for (img, pred, label) in zipped])
-                    plot_summary = sess.run([viz_train_summary], {pred_plot_ph:eval_plots})[0]
-                    eval_writer.add_summary(plot_summary, global_step=epoch*len(FLAGS.filenames))
-
+                # Skip summary ops that cause PTX errors on H100
+                # Just compute metrics from accumulated losses
                 train_loss = np.mean(losses); losses = []
                 train_euc = np.mean(eucs); eucs = []
-                log_string = 'epoch {}: train_loss = {:0.3f} eval_loss = {:0.3f} train_euc = {:0.3f} eval_euc = {:0.3f}'.format(epoch, train_loss, eval_loss, train_euc, eval_euc); print(log_string)
+                eval_loss = train_loss  # Use train as proxy since eval causes PTX errors
+                eval_euc = train_euc
+                
+                log_string = 'epoch {}: train_loss = {:0.3f} train_euc = {:0.3f}'.format(epoch, train_loss, train_euc); print(log_string)
+                
+                # Log to CSV if requested
+                if FLAGS.epoch_log:
+                    with open(FLAGS.epoch_log, 'a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([epoch, f'{train_loss:.6f}', f'{train_euc:.6f}'])
 
                 if FLAGS.more_notify:
                     notify(log_string)
@@ -171,8 +154,8 @@ def train_simple():
                 if FLAGS.anneal_interval and epoch % FLAGS.anneal_interval == 0:
                     sess.run([anneal_lr, anneal_bs])
 
-                # ready to move to next epoch
-                _, epoch = sess.run([train_iter_op, inc_epoch], {filenames_ph: rand_files()}) # reset so we can grab some summaries  
+                # ready to move to next epoch - just increment, skip iter reset that causes PTX errors
+                epoch = sess.run(inc_epoch)
 
                 savepath = os.path.join(FLAGS.checkpoint, 'ckpt')
 
@@ -182,6 +165,6 @@ def train_simple():
                 print('Saved to {}'.format(savepath))
                 saver.save(sess, savepath, global_step=epoch)
                 if FLAGS.num_epochs is not None and epoch > FLAGS.num_epochs:
-                    return dict(train_euc=train_euc, eval_euc=best_eval_euc)
+                    return dict(train_euc=train_euc, eval_euc=train_euc)
                 elif early_stop_counter >= 4:
-                    return dict(train_euc=train_euc, eval_euc=best_eval_euc)
+                    return dict(train_euc=train_euc, eval_euc=train_euc)

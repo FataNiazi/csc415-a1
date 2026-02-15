@@ -1,5 +1,6 @@
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 from domrand.define_flags import FLAGS
 from domrand.utils.general import bin_to_xyz_tf
