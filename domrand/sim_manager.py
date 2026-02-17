@@ -6,6 +6,7 @@ import os
 import yaml
 
 # Set EGL rendering for headless mode before importing mujoco
+# Will show warnings but automatically falls back to software rendering
 os.environ.setdefault('MUJOCO_GL', 'egl')
 
 from dm_control import mujoco
@@ -24,6 +25,7 @@ from domrand.utils.sim import sample, sample_xyz, sample_joints, sample_light_di
 class SimManager(object):
     """Object to handle randomization of all relevant properties of Mujoco sim"""
     def __init__(self, filepath, random_params={}, gpu_render=False, gui=False, display_data=False):
+        self.gpu_render = gpu_render
         self.model = mujoco.MjModel.from_xml_path(filepath)
         self.data = mujoco.MjData(self.model)
         self.filepath = filepath

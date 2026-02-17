@@ -133,20 +133,30 @@ def train_simple():
             except tf.errors.OutOfRangeError:
                 pbar.close()
 
-                # Skip summary ops that cause PTX errors on H100
-                # Just compute metrics from accumulated losses
+                # Compute training metrics
                 train_loss = np.mean(losses); losses = []
                 train_euc = np.mean(eucs); eucs = []
-                eval_loss = train_loss  # Use train as proxy since eval causes PTX errors
-                eval_euc = train_euc
-                
-                log_string = 'epoch {}: train_loss = {:0.3f} train_euc = {:0.3f}'.format(epoch, train_loss, train_euc); print(log_string)
-                
+
+                # Evaluate on REAL images (no summary ops to avoid PTX errors)
+                sess.run(eval_iter_op, feed_dict={eval_img_ph: file_eval_imgs, eval_label_ph: file_eval_labels})
+                eval_loss, eval_euc = sess.run([model.loss, model.euc])
+
+                # Check for improvement (early stopping)
+                if eval_euc > best_eval_euc:
+                    early_stop_counter += 1
+                else:
+                    early_stop_counter = 0
+                    best_eval_euc = eval_euc
+
+                log_string = 'epoch {}: train_loss = {:0.3f} eval_loss = {:0.3f} train_euc = {:0.3f} eval_euc = {:0.3f}'.format(
+                    epoch, train_loss, eval_loss, train_euc, eval_euc)
+                print(log_string)
+
                 # Log to CSV if requested
                 if FLAGS.epoch_log:
                     with open(FLAGS.epoch_log, 'a', newline='') as f:
                         writer = csv.writer(f)
-                        writer.writerow([epoch, f'{train_loss:.6f}', f'{train_euc:.6f}'])
+                        writer.writerow([epoch, f'{train_loss:.6f}', f'{train_euc:.6f}', f'{eval_loss:.6f}', f'{eval_euc:.6f}'])
 
                 if FLAGS.more_notify:
                     notify(log_string)
@@ -154,7 +164,8 @@ def train_simple():
                 if FLAGS.anneal_interval and epoch % FLAGS.anneal_interval == 0:
                     sess.run([anneal_lr, anneal_bs])
 
-                # ready to move to next epoch - just increment, skip iter reset that causes PTX errors
+                # Reset training iterator for next epoch
+                sess.run(train_iter_op, {filenames_ph: rand_files()})
                 epoch = sess.run(inc_epoch)
 
                 savepath = os.path.join(FLAGS.checkpoint, 'ckpt')
@@ -165,6 +176,6 @@ def train_simple():
                 print('Saved to {}'.format(savepath))
                 saver.save(sess, savepath, global_step=epoch)
                 if FLAGS.num_epochs is not None and epoch > FLAGS.num_epochs:
-                    return dict(train_euc=train_euc, eval_euc=train_euc)
+                    return dict(train_euc=train_euc, eval_euc=eval_euc)
                 elif early_stop_counter >= 4:
-                    return dict(train_euc=train_euc, eval_euc=train_euc)
+                    return dict(train_euc=train_euc, eval_euc=eval_euc)

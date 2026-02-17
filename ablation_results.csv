@@ -1,0 +1,4 @@
+timestamp,variant,epoch,train_loss,train_euc_cm,checkpoint_path
+2026-02-15 14:07:41,full_method,2,0.000000,0.47,./ablation_checkpoints/full_method
+2026-02-15 14:18:27,full_method,3,0.000000,0.45,./ablation_checkpoints/full_method
+2026-02-15 14:25:23,full_method,4,0.000000,0.46,0.43,./ablation_checkpoints/full_method

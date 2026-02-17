@@ -1,118 +1,194 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
-Reproduce the ablation study from:
-  "Domain Randomization for Transferring Deep Neural Networks
-   from Simulation to the Real World" (Tobin et al., 2017)
+Run ablation study experiments for domain randomization.
 
-Table 1 ablation: systematically remove one randomization component
-at a time to measure its contribution to sim-to-real transfer.
+Trains each ablation variant for 1 epoch per run.
+All results are logged to a single CSV file.
 
-Usage:
-  TF_XLA_FLAGS="--tf_xla_auto_jit=2" python run_ablation_experiments.py
+How to use:
+    python run_ablation_experiments.py
 """
 
-import os, sys, subprocess, csv
+import os
+import csv
+import glob
+from datetime import datetime
+import numpy as np
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
-EPOCHS     = 20
-NUM_FILES  = 10
-DATA_DIR   = "./experiment_results/data"
-RESULTS_DIR= "./experiment_results"
+from domrand.trainer import train_simple
+from domrand.define_flags import FLAGS
 
-EXPERIMENTS = [
-    ("full_method",     []),
-    ("no_noise",        ["--no_noise"]),
-    ("no_camera_rand",  ["--no_camera_rand"]),
-    ("no_distractors",  ["--no_distractors"]),
+# configs
+DATA_DIR = "./ablation_data"
+RESULTS_CSV = "./ablation_results.csv"
+CHECKPOINTS_DIR = "./ablation_checkpoints"
+
+ABLATION_VARIANTS = [
+    "full_method",
+    "no_noise",
+    "no_camera_rand",
+    "no_distractors"
 ]
 
-def generate_data():
-    """Generate TFRecord training data via domain randomization."""
-    import time, glob
-    import tensorflow as tf
-    sys.path.insert(0, os.path.dirname(__file__))
-    from domrand.sim_manager import SimManager
 
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if glob.glob(os.path.join(DATA_DIR, "*.tfrecords")):
-        print(f"Data already exists in {DATA_DIR}, skipping generation.")
+def setup_results_csv():
+    """Create CSV with header if it doesn't exist."""
+    if not os.path.exists(RESULTS_CSV):
+        with open(RESULTS_CSV, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                'timestamp',
+                'variant',
+                'epoch',
+                'train_loss',
+                'train_euc_cm',
+                'eval_euc_cm',
+                'checkpoint_path'
+            ])
+        print(f"Created: {RESULTS_CSV}\n")
+    else:
+        print(f"Appending to: {RESULTS_CSV}\n")
+
+
+def train_variant(variant_name):
+    """Train one ablation variant for 1 epoch."""
+    print("\n" + "="*80)
+    print(f"TRAINING: {variant_name.upper().replace('_', ' ')}")
+    print("="*80)
+
+    # Setup paths
+    train_data_dir = os.path.join(DATA_DIR, "train", variant_name)
+    checkpoint_dir = os.path.join(CHECKPOINTS_DIR, variant_name)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    # Get training files
+    train_files = sorted(glob.glob(os.path.join(train_data_dir, "*.tfrecords")))
+    if not train_files:
+        print(f"ERROR: No training data found. Please run: python generate_data.py")
+        return None
+
+    print(f"Training data: {len(train_files)} files")
+    print(f"Checkpoint: {checkpoint_dir}")
+
+    # Setting the Hyperparmeters for training here
+    FLAGS.data_path = train_data_dir
+    FLAGS.filenames = train_files
+    FLAGS.checkpoint = checkpoint_dir
+    FLAGS.num_epochs = 1
+    FLAGS.lr = 1e-4
+    FLAGS.bs = 64
+    FLAGS.plot_preds = False
+    FLAGS.notify = False
+
+    # Train
+    print("Training for 1 epoch...\n")
+    results = train_simple()
+
+    train_loss = 0.0
+    train_euc = results['train_euc']
+    eval_euc = results['eval_euc']
+
+    # Get current epoch count
+    ckpt = tf.train.latest_checkpoint(checkpoint_dir)
+    epoch = 1
+    if ckpt:
+        epoch = int(ckpt.split('-')[-1])
+
+    print(f"\n Training complete!")
+    print(f"  Epoch: {epoch}")
+    print(f"  Train error: {train_euc:.2f} cm")
+    print(f"  Eval error (real images): {eval_euc:.2f} cm")
+
+    # Log to a csv file
+    with open(RESULTS_CSV, 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            variant_name,
+            epoch,
+            f'{train_loss:.6f}',
+            f'{train_euc:.2f}',
+            f'{eval_euc:.2f}',
+            checkpoint_dir
+        ])
+
+    return {
+        'variant': variant_name,
+        'epoch': epoch,
+        'train_euc': train_euc,
+        'eval_euc': eval_euc
+    }
+
+
+def print_summary():
+    """Print summary of all results."""
+    if not os.path.exists(RESULTS_CSV):
+        print("No results yet. Run training first.")
         return
 
-    sim = SimManager(filepath="xmls/fetch/main.xml")
-    for i in range(NUM_FILES):
-        fname = os.path.join(DATA_DIR, f"{time.strftime('%Y%m%d-%H%M%S')}-{i}.tfrecords")
-        writer = tf.io.TFRecordWriter(fname)
-        for _ in range(1000):
-            sim.randomize()
-            img = sim.render()
-            pos = sim.get_actuator_positions()
-            feat = {
-                "image":  tf.train.Feature(bytes_list=tf.train.BytesList(value=[img.tobytes()])),
-                "label":  tf.train.Feature(float_list=tf.train.FloatList(value=pos)),
-                "height": tf.train.Feature(int64_list=tf.train.Int64List(value=[img.shape[0]])),
-                "width":  tf.train.Feature(int64_list=tf.train.Int64List(value=[img.shape[1]])),
-                "depth":  tf.train.Feature(int64_list=tf.train.Int64List(value=[img.shape[2]])),
-            }
-            writer.write(tf.train.Example(features=tf.train.Features(feature=feat)).SerializeToString())
-        writer.close()
-        time.sleep(0.1)
-        print(f"  [{i+1}/{NUM_FILES}] {fname}")
-    print("Data generation complete.\n")
+    print("\n" + "="*80)
+    print("ABLATION STUDY RESULTS")
+    print("="*80)
 
-def train(name, flags):
-    """Run one training experiment, return final metrics."""
-    ckpt = os.path.join(RESULTS_DIR, "checkpoints", name)
-    logs = os.path.join(RESULTS_DIR, "logs", name)
-    csv_path = os.path.join(logs, "epoch_metrics.csv")
-    os.makedirs(ckpt, exist_ok=True)
-    os.makedirs(logs, exist_ok=True)
+    # Read all results
+    results_by_variant = {}
+    with open(RESULTS_CSV, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            variant = row['variant']
+            if variant not in results_by_variant:
+                results_by_variant[variant] = []
+            results_by_variant[variant].append(row)
 
-    cmd = [sys.executable, "run_training.py",
-           "--data_path", DATA_DIR,
-           "--checkpoint", ckpt,
-           "--logpath", logs,
-           "--num_epochs", str(EPOCHS),
-           "--epoch_log", csv_path] + flags
+    # Print for each variant
+    for variant in ABLATION_VARIANTS:
+        if variant not in results_by_variant:
+            continue
 
-    print(f"\n{'='*50}\n  {name}\n{'='*50}")
-    subprocess.run(cmd)
+        runs = results_by_variant[variant]
+        latest = runs[-1]
 
-    # read final epoch metrics
-    loss, euc = "N/A", "N/A"
-    if os.path.exists(csv_path):
-        with open(csv_path) as f:
-            for line in f: pass
-        parts = line.strip().split(",")
-        if len(parts) >= 3:
-            loss, euc = parts[1], parts[2]
-    return loss, euc
+        print(f"\n{variant.upper().replace('_', ' ')}:")
+        print(f"  Total runs: {len(runs)}")
+        print(f"  Latest epoch: {latest['epoch']}")
+        print(f"  Latest train error: {latest['train_euc_cm']} cm")
+        print(f"  Latest eval error (real): {latest.get('eval_euc_cm', 'N/A')} cm")
+        print(f"  Checkpoint: {latest['checkpoint_path']}")
+
+    print("\n" + "="*80)
+    print(f"Full log: {RESULTS_CSV}")
+    print("="*80 + "\n")
+
 
 def main():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    print("Generating data...")
-    generate_data()
+    print("\n" + "="*80)
+    print("DOMAIN RANDOMIZATION ABLATION STUDY")
+    print("="*80)
+    print(f"\nVariants: {', '.join(ABLATION_VARIANTS)}")
+    print(f"Epochs per run: 1")
+    print(f"Results CSV: {RESULTS_CSV}")
+    print()
 
-    print("Running ablation experiments...")
-    rows = []
-    for name, flags in EXPERIMENTS:
-        loss, euc = train(name, flags)
-        rows.append((name, loss, euc))
+    # setup csv
+    setup_results_csv()
 
-    # save results
-    out = os.path.join(RESULTS_DIR, "ablation_results.csv")
-    with open(out, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["experiment", "train_loss", "train_euc"])
-        w.writerows(rows)
+    # Train each variant
+    for i, variant in enumerate(ABLATION_VARIANTS, 1):
+        print(f"\n[{i}/{len(ABLATION_VARIANTS)}] Training {variant}...")
+        result = train_variant(variant)
 
-    # print table
-    print(f"\n{'='*50}")
-    print("ABLATION RESULTS")
-    print(f"{'='*50}")
-    print(f"{'Experiment':<20}{'Loss':<12}{'Euc Error':<12}")
-    print("-"*44)
-    for name, loss, euc in rows:
-        print(f"{name:<20}{loss:<12}{euc:<12}")
-    print(f"\nSaved to {out}")
+        if result:
+            print(f"✓ {variant} complete")
+        else:
+            print(f"✗ {variant} failed")
 
-if __name__ == "__main__":
+        # Reset graph for next variant
+        tf.reset_default_graph()
+
+    print_summary() # print out a summary
+
+
+if __name__ == '__main__':
     main()

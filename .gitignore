@@ -1,8 +1,10 @@
 # General
+.*/
 data/sim
 scratch/
 checkpoint/
 checkpoints/
+ablation_data/
 .lenv/
 
 # Experiment outputs
@@ -11,6 +13,7 @@ experiment_results/
 results/
 *.tfrecords
 *.log
+ablation_checkpoints/
 
 # Mujoco
 .mujoco/
